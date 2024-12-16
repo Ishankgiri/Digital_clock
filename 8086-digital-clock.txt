@@ -1,0 +1,201 @@
+.model small
+.stack 100h
+
+; Timer Port Definitions
+TIMER_CONTROL_PORT  EQU 43h
+TIMER_0_PORT        EQU 40h
+
+.data
+    ; Time storage variables
+    hours   DB  0   ; Current hours (0-23)
+    minutes DB  0   ; Current minutes (0-59)
+    seconds DB  0   ; Current seconds (0-59)
+
+    ; Display buffers
+    time_str DB  '00:00:00$'  ; Formatted time string
+
+.code
+main PROC
+    ; Initialize data segment
+    mov ax, @data
+    mov ds, ax
+
+    ; Initialize display
+    call clear_screen
+
+main_loop:
+    ; Update time using precise 1 Hz delay
+    call precise_1hz_delay
+    call update_time
+    call format_time
+    call display_time
+
+    ; Check for time setting or other inputs
+    call check_input
+
+    jmp main_loop
+main ENDP
+
+; Precise 1 Hz Delay Subroutine
+precise_1hz_delay PROC
+    ; Save registers
+    push ax
+    
+    ; Disable interrupts during precise timing
+    cli
+
+    ; Configure Timer 0 for Mode 2 (Rate Generator)
+    mov al, 00110100b
+    out TIMER_CONTROL_PORT, al
+
+    ; Calculate timer count for 1 Hz 
+    ; Assumes 1.19 MHz base clock
+    ; Count = 1,190,000 (1.19 MHz / 1 Hz)
+    mov al, 1190000 AND 0FFh      ; Low byte
+    out TIMER_0_PORT, al
+    mov al, (1190000 SHR 8) AND 0FFh  ; High byte
+    out TIMER_0_PORT, al
+
+    ; Wait for one complete timer cycle
+wait_timer_cycle:
+    in al, TIMER_0_PORT
+    test al, 80h  ; Check if output pin is low
+    jz wait_timer_cycle
+
+    ; Restore registers and return
+    sti  ; Re-enable interrupts
+    pop ax
+    ret
+precise_1hz_delay ENDP
+
+; Update time routine
+update_time PROC
+    ; Increment seconds
+    inc seconds
+    cmp seconds, 60
+    jl time_done
+
+    ; Reset seconds, increment minutes
+    mov seconds, 0
+    inc minutes
+    cmp minutes, 60
+    jl time_done
+
+    ; Reset minutes, increment hours
+    mov minutes, 0
+    inc hours
+    cmp hours, 24
+    jl time_done
+
+    ; Reset hours if reached 24
+    mov hours, 0
+
+time_done:
+    ret
+update_time ENDP
+
+; Format time into string
+format_time PROC
+    ; Convert hours to string
+    mov al, hours
+    call byte_to_ascii
+    mov [time_str], ah
+    mov [time_str+1], al
+
+    ; Add colon
+    mov byte ptr [time_str+2], ':'
+
+    ; Convert minutes to string
+    mov al, minutes
+    call byte_to_ascii
+    mov [time_str+3], ah
+    mov [time_str+4], al
+
+    ; Add second colon
+    mov byte ptr [time_str+5], ':'
+
+    ; Convert seconds to string
+    mov al, seconds
+    call byte_to_ascii
+    mov [time_str+6], ah
+    mov [time_str+7], al
+    ret
+format_time ENDP
+
+; Convert byte to ASCII representation
+byte_to_ascii PROC
+    ; Input: AL = byte to convert
+    ; Output: AH = tens digit, AL = ones digit
+    mov ah, al
+    aam     ; Unpack BCD: AH = tens, AL = ones
+    add ax, 3030h  ; Convert to ASCII
+    ret
+byte_to_ascii ENDP
+
+; Display time on screen
+display_time PROC
+    ; Set cursor position
+    mov ah, 02h
+    mov bh, 0
+    mov dh, 10  ; Row
+    mov dl, 20  ; Column
+    int 10h
+
+    ; Display time string
+    mov ah, 09h
+    mov dx, offset time_str
+    int 21h
+    ret
+display_time ENDP
+
+; Clear screen routine
+clear_screen PROC
+    ; Clear screen and set video mode
+    mov ah, 00h
+    mov al, 03h  ; Text mode, 80x25 color
+    int 10h
+    ret
+clear_screen ENDP
+
+; Input handling routine
+check_input PROC
+    ; Check for key press
+    mov ah, 01h
+    int 16h
+    jz input_done  ; No key pressed
+
+    ; Read key
+    mov ah, 00h
+    int 16h
+
+    ; Handle time setting keys
+    cmp al, 'h'  ; Increment hours
+    je increment_hours
+    cmp al, 'H'
+    je increment_hours
+    cmp al, 'm'  ; Increment minutes
+    je increment_minutes
+    cmp al, 'M'
+    je increment_minutes
+
+    jmp input_done
+
+increment_hours:
+    inc hours
+    cmp hours, 24
+    jl input_done
+    mov hours, 0
+    jmp input_done
+
+increment_minutes:
+    inc minutes
+    cmp minutes, 60
+    jl input_done
+    mov minutes, 0
+    jmp input_done
+
+input_done:
+    ret
+check_input ENDP
+
+END main
